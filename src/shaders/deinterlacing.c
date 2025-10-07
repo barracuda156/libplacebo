@@ -27,6 +27,11 @@ void pl_shader_deinterlace(pl_shader sh, const struct pl_deinterlace_source *src
 {
     params = PL_DEF(params, &pl_deinterlace_default_params);
 
+    if (sh_glsl(sh).version < 130) {
+        SH_FAIL(sh, "Deinterlacing requires GLSL >= 130!");
+        return;
+    }
+
     const struct pl_tex_params *texparams = &src->cur.top->params;
     if (!sh_require(sh, PL_SHADER_SIG_NONE, texparams->w, texparams->h))
         return;
@@ -54,11 +59,11 @@ void pl_shader_deinterlace(pl_shader sh, const struct pl_deinterlace_source *src
         return;
 
     GLSL("#define GET(TEX, X, Y)                              \\\n"
-         "    (textureLod(TEX, pos + pt * vec2(X, Y), 0.0).%s)  \n"
+         "    (%s(TEX, pos + pt * vec2(X, Y), 0.0).%s)  \n"
          "vec2 pos = "$";                                       \n"
          "vec2 pt  = "$";                                       \n"
          "T res;                                                \n",
-         swiz, pos, pt);
+         sh_tex_lod_fn(sh, *texparams), swiz, pos, pt);
 
     if (src->field == PL_FIELD_NONE) {
         GLSL("res = GET("$", 0, 0); \n", cur);

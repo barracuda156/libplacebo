@@ -144,7 +144,7 @@ pl_gpu pl_gpu_create_gl(pl_log log, pl_opengl pl_gl, const struct pl_opengl_para
         }
     }
 
-    static const int glsl_ver_req = 130;
+    static const int glsl_ver_req = 110;
     if (glsl->version < glsl_ver_req) {
         PL_FATAL(gpu, "GLSL version too old (%d < %d), please use a newer "
                  "OpenGL implementation or downgrade libplacebo!",
@@ -241,12 +241,15 @@ pl_gpu pl_gpu_create_gl(pl_log log, pl_opengl pl_gl, const struct pl_opengl_para
     }
 
     // Cache some internal capability checks
+    p->has_stride = gl_test_ext(gpu, "GL_EXT_unpack_subimage", 11, 30);
+    p->has_unpack_image_height = p->gl_ver >= 12 || p->gles_ver >= 30;
     p->has_vao = gl_test_ext(gpu, "GL_ARB_vertex_array_object", 30, 30);
     p->has_invalidate_fb = gl_test_ext(gpu, "GL_ARB_invalidate_subdata", 43, 30);
     p->has_invalidate_tex = gl_test_ext(gpu, "GL_ARB_invalidate_subdata", 43, 0);
     p->has_queries = gl_test_ext(gpu, "GL_ARB_timer_query", 30, 0);
+    p->has_fbos = gl_test_ext(gpu, "GL_ARB_framebuffer_object", 30, 20);
     p->has_storage = gl_test_ext(gpu, "GL_ARB_shader_image_load_store", 42, 31);
-    p->has_readback = true;
+    p->has_readback = p->has_fbos;
 
     if (p->has_readback && p->gles_ver) {
         GLuint fbo = 0, tex = 0;
@@ -277,9 +280,11 @@ pl_gpu pl_gpu_create_gl(pl_log log, pl_opengl pl_gl, const struct pl_opengl_para
 
     // We simply don't know, so make up some values
     limits->align_tex_xfer_offset = 32;
-    limits->align_tex_xfer_pitch = 4;
+    limits->align_tex_xfer_pitch = 1;
     limits->fragment_queues = 1;
     limits->compute_queues = glsl->compute ? 1 : 0;
+    if (gl_test_ext(gpu, "GL_EXT_unpack_subimage", 11, 30))
+        limits->align_tex_xfer_pitch = 4;
 
     if (!gl_check_err(gpu, "pl_gpu_create_gl")) {
         PL_WARN(gpu, "Encountered errors while detecting GPU capabilities... "

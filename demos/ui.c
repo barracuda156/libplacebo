@@ -158,9 +158,14 @@ bool ui_draw(struct ui *ui, const struct pl_swapchain_frame *frame)
             continue;
 
         pl_shader sh = pl_dispatch_begin(ui->dp);
+
+        const char *tex_fn = sh_glsl(sh).version >= 130 ? "textureLod" : "texture2DLod";
+        char *shader_body;
+        asprintf(&shader_body, "color = %s(ui_tex, coord, 0.0).r * vcolor;", tex_fn);
+
         pl_shader_custom(sh, &(struct pl_custom_shader) {
             .description = "nuklear UI",
-            .body = "color = textureLod(ui_tex, coord, 0.0).r * vcolor;",
+            .body = shader_body,
             .output = PL_SHADER_SIG_COLOR,
             .num_descriptors = 1,
             .descriptors = &(struct pl_shader_desc) {
@@ -174,6 +179,8 @@ bool ui_draw(struct ui *ui, const struct pl_swapchain_frame *frame)
                 },
             },
         });
+
+        free(shader_body);
 
         struct pl_color_repr repr = frame->color_repr;
         pl_shader_color_map_ex(sh, NULL, pl_color_map_args(

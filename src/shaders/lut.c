@@ -626,13 +626,14 @@ next_dim: ; // `continue` out of the inner loop
             }
         });
 
-        if (is_linear) {
+        bool can_fetch = sh_glsl(sh).version >= 130;
+        if (is_linear || !can_fetch) {
             ident_t pos_macros[PL_ARRAY_SIZE(sizes)] = {0};
             for (int i = 0; i < dims; i++)
                 pos_macros[i] = texel_scale(sh, sizes[i], true);
 
-            GLSLH("#define "$"(pos) (textureLod("$", %s(\\\n",
-                  name, tex, vartypes[PL_VAR_FLOAT][texdim - 1]);
+            GLSLH("#define "$"(pos) (%s("$", %s(\\\n",
+                  name, sh_tex_lod_fn(sh, lut->tex->params), tex, vartypes[PL_VAR_FLOAT][texdim - 1]);
 
             for (int i = 0; i < texdim; i++) {
                 char sep = i == 0 ? ' ' : ',';

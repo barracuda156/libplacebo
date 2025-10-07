@@ -945,7 +945,8 @@ static void draw_overlays(struct pass_state *pass, pl_tex fbo,
 
         switch (ol.mode) {
         case PL_OVERLAY_NORMAL:
-            GLSL("vec4 color = textureLod("$", coord, 0.0); \n", tex);
+            GLSL("vec4 color = %s("$", coord, 0.0); \n",
+                 sh_tex_lod_fn(sh, ol.tex->params), tex);
             break;
         case PL_OVERLAY_MONOCHROME:
             GLSL("vec4 color = osd_color; \n");
@@ -971,8 +972,8 @@ static void draw_overlays(struct pass_state *pass, pl_tex fbo,
         bool premul = repr.alpha == PL_ALPHA_PREMULTIPLIED;
         pl_shader_encode_color(sh, &repr);
         if (ol.mode == PL_OVERLAY_MONOCHROME) {
-            GLSL("color.%s *= textureLod("$", coord, 0.0).r; \n",
-                 premul ? "rgba" : "a", tex);
+            GLSL("color.%s *= %s("$", coord, 0.0).r; \n",
+                 premul ? "rgba" : "a", sh_tex_lod_fn(sh, ol.tex->params), tex);
         }
 
         swizzle_color(sh, comps, comp_map, true);
@@ -2370,16 +2371,15 @@ static pl_tex pass_blur(struct pass_state *pass, pl_tex src_tex, int comps,
         if (!tex)
             goto error;
 
-
     #pragma GLSL /* pass_blur */                                                \
         vec4 color;                                                             \
         {                                                                       \
             vec2 step = vec2(${float: offset / w}, ${float: offset / h});       \
-            color  = textureLod($tex, $pos, 0.0) * 4.0;                         \
-            color += textureLod($tex, $pos - step, 0.0);                        \
-            color += textureLod($tex, $pos + step, 0.0);                        \
-            color += textureLod($tex, $pos - vec2(step.x, -step.y), 0.0);       \
-            color += textureLod($tex, $pos + vec2(step.x, -step.y), 0.0);       \
+            color  = ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos, 0.0) * 4.0;                         \
+            color += ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos - step, 0.0);                        \
+            color += ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos + step, 0.0);                        \
+            color += ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos - vec2(step.x, -step.y), 0.0);       \
+            color += ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos + vec2(step.x, -step.y), 0.0);       \
             color /= 8.0;                                                       \
         }
 
@@ -2413,14 +2413,14 @@ static pl_tex pass_blur(struct pass_state *pass, pl_tex src_tex, int comps,
         {                                                                       \
             vec2 step = vec2(${float: offset / w}, ${float: offset / h});       \
             vec2 step2 = step + step;                                           \
-            color  = textureLod($tex, $pos - vec2(step2.x, 0.0), 0.0);          \
-            color += textureLod($tex, $pos + vec2(step2.x, 0.0), 0.0);          \
-            color += textureLod($tex, $pos - vec2(0.0, step2.y), 0.0);          \
-            color += textureLod($tex, $pos + vec2(0.0, step2.y), 0.0);          \
-            color += textureLod($tex, $pos + vec2(-step.x, -step.y), 0.0) * 2.0;\
-            color += textureLod($tex, $pos + vec2( step.x, -step.y), 0.0) * 2.0;\
-            color += textureLod($tex, $pos + vec2(-step.x,  step.y), 0.0) * 2.0;\
-            color += textureLod($tex, $pos + vec2( step.x,  step.y), 0.0) * 2.0;\
+            color  = ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos - vec2(step2.x, 0.0), 0.0);          \
+            color += ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos + vec2(step2.x, 0.0), 0.0);          \
+            color += ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos - vec2(0.0, step2.y), 0.0);          \
+            color += ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos + vec2(0.0, step2.y), 0.0);          \
+            color += ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos + vec2(-step.x, -step.y), 0.0) * 2.0;\
+            color += ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos + vec2( step.x, -step.y), 0.0) * 2.0;\
+            color += ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos + vec2(-step.x,  step.y), 0.0) * 2.0;\
+            color += ${sh_tex_lod_fn(sh, prev->params)}($tex, $pos + vec2( step.x,  step.y), 0.0) * 2.0;\
             color /= 12.0;                                                      \
         }
 
@@ -2564,9 +2564,9 @@ static void clear_target(pl_renderer rr, const struct pl_frame *target,
                 },
             });
 
-            GLSL("vec4 color = textureLod("$", coord, 0.0); \n"
+            GLSL("vec4 color = %s("$", coord, 0.0); \n"
                  "color.%s *= vec%d(1.0 / "$"); \n",
-                 tex,
+                 sh_tex_lod_fn(sh, background->params), tex,
                  params->blend_params ? "rgb" : "rgba",
                  params->blend_params ? 3 : 4,
                  SH_FLOAT(bg_scale));
@@ -2752,12 +2752,13 @@ static bool pass_output_target(struct pass_state *pass)
             }
 
             GLSL("vec2 outcoord = gl_FragCoord.xy * "$";                    \n"
-                 "bvec2 tile = lessThan(fract(outcoord), vec2(0.5));        \n"
+                 "%s tile = lessThan(fract(outcoord), vec2(0.5));           \n"
                  "vec3 tile_color = tile.x == tile.y ? vec3("$", "$", "$")  \n"
                  "                                   : vec3("$", "$", "$"); \n"
                  "color.rgb += (1.0 - color.a) * tile_color;                \n"
                  "color.a = 1.0;                                            \n",
                  SH_FLOAT(1.0 / PL_DEF(params->tile_size, pl_render_default_params.tile_size)),
+                 sh_bvec(sh, 2),
                  SH_FLOAT(color[0][0]), SH_FLOAT(color[0][1]), SH_FLOAT(color[0][2]),
                  SH_FLOAT(color[1][0]), SH_FLOAT(color[1][1]), SH_FLOAT(color[1][2]));
             img->repr.alpha = PL_ALPHA_NONE;
@@ -3978,7 +3979,8 @@ inter_pass_error:
         ident_t pos, tex = sh_bind(sh, frames[i].tex, PL_TEX_ADDRESS_CLAMP,
                                    sample_mode, "frame", NULL, &pos, NULL);
 
-        GLSL("color = textureLod("$", "$", 0.0); \n", tex, pos);
+        GLSL("color = %s("$", "$", 0.0); \n", 
+             sh_tex_lod_fn(sh, frames[i].tex->params), tex, pos);
 
         // Note: This ignores differences in ICC profile, which we decide to
         // just simply not care about. Doing that properly would require
@@ -4162,11 +4164,12 @@ void pl_frame_clear_tiles(pl_gpu gpu, const struct pl_frame *frame,
         GLSL("// pl_frame_clear_tiles (plane %d)                    \n"
              "vec4 color;                                           \n"
              "vec2 outcoord = gl_FragCoord.xy * vec2("$", "$");     \n"
-             "bvec2 tile = lessThan(fract(outcoord), vec2(0.5));    \n"
+             "%s tile = lessThan(fract(outcoord), vec2(0.5));       \n"
              "color.rgb = tile.x == tile.y ? vec3("$", "$", "$")    \n"
              "                             : vec3("$", "$", "$");   \n"
              "color.a = 1.0;                                        \n",
              p, SH_FLOAT(1.0 / size_x), SH_FLOAT(1.0 / size_y),
+             sh_bvec(sh, 2),
              SH_FLOAT(tiles[0][0]), SH_FLOAT(tiles[0][1]), SH_FLOAT(tiles[0][2]),
              SH_FLOAT(tiles[1][0]), SH_FLOAT(tiles[1][1]), SH_FLOAT(tiles[1][2]));
 

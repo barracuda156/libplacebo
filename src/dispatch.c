@@ -507,7 +507,7 @@ static void generate_shaders(pl_dispatch dp,
                 } else {
                     ADD(pre, "layout(binding=%d) ", desc->binding);
                 }
-            } else if (format) {
+            } else if (gpu->glsl.version >= 130 && format) {
                 ADD(pre, "layout(%s) ", format);
             }
 
@@ -563,7 +563,7 @@ static void generate_shaders(pl_dispatch dp,
                 } else {
                     ADD(pre, "layout(binding=%d) ", desc->binding);
                 }
-            } else if (format) {
+            } else if (gpu->glsl.version >= 130 && format) {
                 ADD(pre, "layout(%s) ", format);
             }
 
@@ -593,9 +593,14 @@ static void generate_shaders(pl_dispatch dp,
         add_var(pre, var);
     }
 
+    char *vert_in  = gpu->glsl.version >= 130 ? "in" : "attribute";
+    char *vert_out = gpu->glsl.version >= 130 ? "out" : "varying";
+    char *frag_in  = gpu->glsl.version >= 130 ? "in" : "varying";
+
     pl_str_builder glsl = dp->tmp[TMP_MAIN];
     ADD_CAT(glsl, pre);
 
+    const char *out_color = "gl_FragColor";
     switch(pass_params->type) {
     case PL_PASS_RASTER: {
         pl_assert(params->vert_idx >= 0);
@@ -618,10 +623,10 @@ static void generate_shaders(pl_dispatch dp,
             ident_t id = sh_ident_unpack(sva->attr.name);
 
             if (has_loc) {
-                ADD(vert_head, "layout(location=%d) in %s "$";\n",
-                    va->location, type, sh_ident_unpack(va->name));
+                ADD(vert_head, "layout(location=%d) %s %s "$";\n",
+                    va->location, vert_in, type, sh_ident_unpack(va->name));
             } else {
-                ADD(vert_head, "in %s "$";\n", type, sh_ident_unpack(va->name));
+                ADD(vert_head, "%s %s "$";\n", vert_in, type, sh_ident_unpack(va->name));
             }
 
             if (i == params->vert_idx) {
@@ -635,13 +640,13 @@ static void generate_shaders(pl_dispatch dp,
             } else {
                 // Everything else is just blindly passed through
                 if (has_loc) {
-                    ADD(vert_head, "layout(location=%d) out %s "$";\n",
-                        va->location, type, id);
-                    ADD(glsl, "layout(location=%d) in %s "$";\n",
-                        va->location, type, id);
+                    ADD(vert_head, "layout(location=%d) %s %s "$";\n",
+                        va->location, vert_out, type, id);
+                    ADD(glsl, "layout(location=%d) %s %s "$";\n",
+                        va->location, frag_in, type, id);
                 } else {
-                    ADD(vert_head, "out %s "$";\n", type, id);
-                    ADD(glsl, "in %s "$";\n", type, id);
+                    ADD(vert_head, "%s %s "$";\n", vert_out, type, id);
+                    ADD(glsl, "%s %s "$";\n", frag_in, type, id);
                 }
                 ADD(vert_body, $" = "$";\n", id, sh_ident_unpack(va->name));
             }
@@ -652,10 +657,14 @@ static void generate_shaders(pl_dispatch dp,
         pl_hash_merge(&pass->signature, pl_str_builder_hash(vert_head));
         *out_vert_builder = vert_head;
 
-        if (has_loc) {
-            ADD(glsl, "layout(location=0) out vec4 out_color;\n");
-        } else {
-            ADD(glsl, "out vec4 out_color;\n");
+        // GLSL 130+ doesn't use the magic gl_FragColor
+        if (gpu->glsl.version >= 130) {
+            out_color = "out_color";
+            if (has_loc) {
+                ADD(glsl, "layout(location=0) out vec4 out_color;\n");
+            } else {
+                ADD(glsl, "out vec4 out_color;\n");
+            }
         }
         break;
     }
@@ -676,7 +685,11 @@ static void generate_shaders(pl_dispatch dp,
     switch (pass_params->type) {
     case PL_PASS_RASTER:
         pl_assert(sh->output == PL_SHADER_SIG_COLOR);
-        ADD(glsl, "out_color = "$"();\n", sh->name);
+        if (gpu->glsl.version >= 130) {
+            ADD(glsl, "out_color = "$"();\n", sh->name);
+        } else {
+            ADD(glsl, "gl_FragColor = "$"();\n", sh->name);
+        }
         break;
     case PL_PASS_COMPUTE:
         ADD(glsl, $"();\n", sh->name);
@@ -684,7 +697,7 @@ static void generate_shaders(pl_dispatch dp,
     case PL_PASS_INVALID:
     case PL_PASS_TYPE_COUNT:
         pl_unreachable();
-    }
+}
 
     ADD(glsl, "}");
 

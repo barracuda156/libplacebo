@@ -195,8 +195,8 @@ void pl_shader_deband(pl_shader sh, const struct pl_sample_src *src,
          "// pl_shader_deband               \n"
          "{                                 \n"
          "vec2 pos = "$", pt = "$";         \n"
-         "color = textureLod("$", pos, 0.0);\n",
-         pos, pt, tex);
+         "color = %s("$", pos, 0.0);        \n",
+         pos, pt, sh_tex_lod_fn(sh, src_params(src)), tex);
 
     mask &= ~0x8u; // ignore alpha channel
     uint8_t num_comps = sh_num_comps(mask);
@@ -210,10 +210,11 @@ void pl_shader_deband(pl_shader sh, const struct pl_sample_src *src,
     }
 
     GLSL("#define GET(X, Y)                                   \\\n"
-         "    (textureLod("$", pos + pt * vec2(X, Y), 0.0).%s)  \n"
+         "    (%s("$", pos + pt * vec2(X, Y), 0.0).%s)  \n"
          "#define T %s                                          \n",
-         tex, swiz, sh_float_type(mask));
+         sh_tex_lod_fn(sh, src_params(src)), tex, swiz, sh_float_type(mask));
 
+    const char *bvec = sh_bvec(sh, num_comps);
     ident_t prng = sh_prng(sh, true, NULL);
     GLSL("T avg, diff, bound;   \n"
          "T res = color.%s;     \n"
@@ -245,9 +246,9 @@ void pl_shader_deband(pl_shader sh, const struct pl_sample_src *src,
                  threshold, i);
 
             if (num_comps > 1) {
-                GLSL("res = mix(avg, res, greaterThan(diff, bound)); \n");
+                GLSL("res = mix(avg, res, %s(greaterThan(diff, bound))); \n", bvec);
             } else {
-                GLSL("res = mix(avg, res, diff > bound); \n");
+                GLSL("res = mix(avg, res, %s(diff > bound)); \n", bvec);
             }
         }
     }
@@ -282,8 +283,8 @@ bool pl_shader_sample_direct(pl_shader sh, const struct pl_sample_src *src)
         return false;
 
     GLSL("// pl_shader_sample_direct                                  \n"
-         "vec4 color = vec4("$") * vec4(textureLod("$", "$", 0.0));   \n",
-         SH_FLOAT(scale), tex, pos);
+         "vec4 color = vec4("$") * vec4(%s("$", "$", 0.0));           \n",
+         SH_FLOAT(scale), sh_tex_lod_fn(sh, src_params(src)), tex, pos);
     return true;
 }
 
@@ -296,8 +297,8 @@ bool pl_shader_sample_nearest(pl_shader sh, const struct pl_sample_src *src)
 
     sh_describe(sh, "nearest");
     GLSL("// pl_shader_sample_nearest                           \n"
-         "vec4 color = vec4("$") * textureLod("$", "$", 0.0);   \n",
-         SH_FLOAT(scale), tex, pos);
+         "vec4 color = vec4("$") * %s("$", "$", 0.0);           \n",
+         SH_FLOAT(scale), sh_tex_lod_fn(sh, src_params(src)), tex, pos);
     return true;
 }
 
@@ -310,8 +311,8 @@ bool pl_shader_sample_bilinear(pl_shader sh, const struct pl_sample_src *src)
 
     sh_describe(sh, "bilinear");
     GLSL("// pl_shader_sample_bilinear                          \n"
-         "vec4 color = vec4("$") * textureLod("$", "$", 0.0);   \n",
-         SH_FLOAT(scale), tex, pos);
+         "vec4 color = vec4("$") * %s("$", "$", 0.0);           \n",
+         SH_FLOAT(scale), sh_tex_lod_fn(sh, src_params(src)), tex, pos);
     return true;
 }
 
@@ -351,11 +352,11 @@ bool pl_shader_sample_bicubic(pl_shader sh, const struct pl_sample_src *src)
     h.xy -= vec2(2.0);                              \
     /* sample four corners, then interpolate */     \
     vec4 p = pos.xyxy + $pt.xyxy * h;               \
-    vec4 c00 = textureLod($tex, p.xy, 0.0);         \
-    vec4 c01 = textureLod($tex, p.xw, 0.0);         \
+    vec4 c00 = ${sh_tex_lod_fn(sh, src_params(src))}($tex, p.xy, 0.0);         \
+    vec4 c01 = ${sh_tex_lod_fn(sh, src_params(src))}($tex, p.xw, 0.0);         \
     vec4 c0 = mix(c01, c00, g.y);                   \
-    vec4 c10 = textureLod($tex, p.zy, 0.0);         \
-    vec4 c11 = textureLod($tex, p.zw, 0.0);         \
+    vec4 c10 = ${sh_tex_lod_fn(sh, src_params(src))}($tex, p.zy, 0.0);         \
+    vec4 c11 = ${sh_tex_lod_fn(sh, src_params(src))}($tex, p.zw, 0.0);         \
     vec4 c1 = mix(c11, c10, g.y);                   \
     color = ${float:scale} * mix(c1, c0, g.x);      \
     }
@@ -383,7 +384,7 @@ bool pl_shader_sample_hermite(pl_shader sh, const struct pl_sample_src *src)
     vec2 size = vec2(textureSize($tex, 0));              \
     vec2 frac = fract(pos * size + vec2(0.5));           \
     pos += $pt * (smoothstep(0.0, 1.0, frac) - frac);    \
-    color = ${float:scale} * textureLod($tex, pos, 0.0); \
+    color = ${float:scale} * ${sh_tex_lod_fn(sh, src_params(src))}($tex, pos, 0.0); \
     }
 
     return true;
@@ -421,11 +422,11 @@ bool pl_shader_sample_gaussian(pl_shader sh, const struct pl_sample_src *src)
     g.xy /= g.xy + g.zw; /* explicitly normalize */ \
     /* sample four corners, then interpolate */     \
     vec4 p = pos.xyxy + $pt.xyxy * (h + off.xyxy);  \
-    vec4 c00 = textureLod($tex, p.xy, 0.0);         \
-    vec4 c01 = textureLod($tex, p.xw, 0.0);         \
+    vec4 c00 = ${sh_tex_lod_fn(sh, src_params(src))}($tex, p.xy, 0.0);         \
+    vec4 c01 = ${sh_tex_lod_fn(sh, src_params(src))}($tex, p.xw, 0.0);         \
     vec4 c0 = mix(c01, c00, g.y);                   \
-    vec4 c10 = textureLod($tex, p.zy, 0.0);         \
-    vec4 c11 = textureLod($tex, p.zw, 0.0);         \
+    vec4 c10 = ${sh_tex_lod_fn(sh, src_params(src))}($tex, p.zy, 0.0);         \
+    vec4 c11 = ${sh_tex_lod_fn(sh, src_params(src))}($tex, p.zw, 0.0);         \
     vec4 c1 = mix(c11, c10, g.y);                   \
     color = ${float:scale} * mix(c1, c0, g.x);      \
     }
@@ -464,7 +465,7 @@ bool pl_shader_sample_oversample(pl_shader sh, const struct pl_sample_src *src,
                                                          \
     /* Compute the right output blend of colors */       \
     pos += (coeff - fcoord) * $pt;                       \
-    color = ${float:scale} * textureLod($tex, pos, 0.0); \
+    color = ${float:scale} * ${sh_tex_lod_fn(sh, src_params(src))}($tex, pos, 0.0); \
     }
 
     return true;
@@ -532,7 +533,7 @@ static void polar_sample(pl_shader sh, pl_filter filter,
         @for (c : comp_mask)                                    \
             c[@c] = ${in}_@c[idx];                              \
     @} else {                                                   \
-        c = textureLod($tex, base + pt * vec2(offset), 0.0);    \
+        c = ${sh_tex_lod_fn(sh, (struct pl_tex_params){ .w = 1, .h = 1, .d = 0 })}($tex, base + pt * vec2(offset), 0.0);    \
     @}                                                          \
     @for (c : comp_mask)                                        \
         color[@c] += w * c[@c];                                 \
@@ -670,7 +671,9 @@ bool pl_shader_sample_polar(pl_shader sh, const struct pl_sample_src *src,
 
     // Disable compute shaders after a (hard-coded) radius of 6, since the
     // gather kernel generally pulls ahead here.
-    bool is_compute = !params->no_compute && sh_glsl(sh).compute;
+    bool is_compute = !params->no_compute && 
+                      sh_glsl(sh).compute &&
+                      sh_glsl(sh).version >= 130; // needed for round()
     is_compute &= obj->filter->radius < 6.0;
 
     while (is_compute) {
@@ -759,8 +762,8 @@ bool pl_shader_sample_polar(pl_shader sh, const struct pl_sample_src *src,
         // Load all relevant texels into shmem
         GLSL("for (int y = int(gl_LocalInvocationID.y); y < "$"; y += %d) {     \n"
              "for (int x = int(gl_LocalInvocationID.x); x < "$"; x += %d) {     \n"
-             "c = textureLod("$", "$"_base + pt * vec2(x - %d, y - %d), 0.0);   \n",
-             ih_c, bh, iw_c, bw, src_tex, in, offset, offset);
+             "c = %s("$", "$"_base + pt * vec2(x - %d, y - %d), 0.0);           \n",
+             ih_c, bh, iw_c, bw, sh_tex_lod_fn(sh, src_params(src)), src_tex, in, offset, offset);
 
         for (uint8_t comps = cmask; comps;) {
             uint8_t c = __builtin_ctz(comps);
@@ -1086,7 +1089,7 @@ bool pl_shader_sample_ortho2(pl_shader sh, const struct pl_sample_src *src,
         off = float(n);                                                         \
         @if (use_linear)                                                        \
             off += ws[n % 4u + 1u];                                             \
-        c = textureLod($src_tex, base + pt * off, 0.0).${swizzle: comps};       \
+        c = ${sh_tex_lod_fn(sh, src_params(src))}($src_tex, base + pt * off, 0.0).${swizzle: comps};       \
         @if (use_ar) {                                                          \
             if (n == ${uint: N} / 2u - 1u || n == ${uint: N} / 2u) {            \
                 lo = min(lo, c);                                                \
@@ -1195,11 +1198,11 @@ void pl_shader_distort(pl_shader sh, pl_tex src_tex, int out_w, int out_h,
         vec4 h = vec4(w1, w3) / g + inv.xyxy;               \
         h.xy -= vec2(2.0);                                  \
         vec4 p = pos.xyxy + pt.xyxy * h;                    \
-        vec4 c00 = textureLod($tex, p.xy, 0.0);             \
-        vec4 c01 = textureLod($tex, p.xw, 0.0);             \
+        vec4 c00 = ${sh_tex_lod_fn(sh, src_tex->params)}($tex, p.xy, 0.0);             \
+        vec4 c01 = ${sh_tex_lod_fn(sh, src_tex->params)}($tex, p.xw, 0.0);             \
         vec4 c0 = mix(c01, c00, g.y);                       \
-        vec4 c10 = textureLod($tex, p.zy, 0.0);             \
-        vec4 c11 = textureLod($tex, p.zw, 0.0);             \
+        vec4 c10 = ${sh_tex_lod_fn(sh, src_tex->params)}($tex, p.zy, 0.0);             \
+        vec4 c11 = ${sh_tex_lod_fn(sh, src_tex->params)}($tex, p.zw, 0.0);             \
         vec4 c1 = mix(c11, c10, g.y);                       \
         color = mix(c1, c0, g.x);                           \
     @} else {                                               \
@@ -1214,5 +1217,4 @@ void pl_shader_distort(pl_shader sh, pl_tex src_tex, int out_w, int out_h,
             color.a *= border.x * border.y;                 \
     @}                                                      \
     }
-
 }

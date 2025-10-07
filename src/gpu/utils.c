@@ -979,8 +979,8 @@ bool pl_tex_blit_compute(pl_gpu gpu, const struct pl_tex_blit_params *params)
                  (float) src_rc.z1 / params->src->params.d);
         }
 
-        GLSL("imageStore("$", dst_pos, textureLod("$", src_pos, 0.0)); \n",
-             dst, src);
+        GLSL("imageStore("$", dst_pos, %s("$", src_pos, 0.0)); \n",
+             dst, sh_tex_lod_fn(sh, params->src->params), src);
 
     } else {
 
@@ -1053,7 +1053,8 @@ void pl_tex_blit_raster(pl_gpu gpu, const struct pl_tex_blit_params *params)
     ident_t pos, src = sh_bind(sh, params->src, PL_TEX_ADDRESS_CLAMP,
         params->sample_mode, "src_tex", &src_rc, &pos, NULL);
 
-    GLSL("vec4 color = textureLod("$", "$", 0.0); \n", src, pos);
+    GLSL("vec4 color = %s("$", "$", 0.0); \n", 
+         sh_tex_lod_fn(sh, params->src->params), src, pos);
 
     pl_dispatch_finish(dp, pl_dispatch_params(
         .shader = &sh,

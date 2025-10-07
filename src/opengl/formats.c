@@ -372,6 +372,10 @@ static void add_format(pl_gpu pgpu, const struct gl_format *gl_fmt)
     if (fmt->caps & PL_FMT_CAP_SAMPLEABLE)
         fmt->gatherable = p->gather_comps >= fmt->num_components;
 
+    // Mask renderable/blittable if no FBOs available
+    if (!p->has_fbos)
+        fmt->caps &= ~(PL_FMT_CAP_RENDERABLE | PL_FMT_CAP_BLITTABLE);
+
     bool host_readable = false;
     if (p->gl_ver && p->has_readback)
         host_readable = true;

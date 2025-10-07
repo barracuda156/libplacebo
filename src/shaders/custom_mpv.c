@@ -1171,8 +1171,13 @@ static bool bind_pass_tex(pl_shader sh, pl_str name,
     GLSLH("#define %.*s_rot mat2(1.0, 0.0, 0.0, 1.0) \n", PL_STR_FMT(name));
 
     // Sampling function boilerplate
-    GLSLH("#define %.*s_tex(pos) ("$" * vec4(textureLod("$", pos, 0.0))) \n",
-          PL_STR_FMT(name), scale, id);
+    if (sh_glsl(sh).version >= 130) {
+        GLSLH("#define %.*s_tex(pos) (textureLod("$", pos, 0.0)) \n",
+              PL_STR_FMT(name), id);
+        } else {
+        GLSLH("#define %.*s_tex(pos) (texture2DLod("$", pos, 0.0)) \n",
+              PL_STR_FMT(name), id);
+    }
     GLSLH("#define %.*s_texOff(off) (%.*s_tex("$" + "$" * vec2(off))) \n",
           PL_STR_FMT(name), PL_STR_FMT(name), pos, pt);
 
@@ -1313,8 +1318,13 @@ static struct pl_hook_res hook_hook(void *priv, const struct pl_hook_params *par
                     GLSLH("#define %.*s "$" \n", PL_STR_FMT(texname), id);
 
                     if (p->descriptors.elem[j].desc.type == PL_DESC_SAMPLED_TEX) {
-                        GLSLH("#define %.*s_tex(pos) (textureLod("$", pos, 0.0)) \n",
-                              PL_STR_FMT(texname), id);
+                        if (sh_glsl(sh).version >= 130) {
+                            GLSLH("#define %.*s_tex(pos) (textureLod("$", pos, 0.0)) \n",
+                                  PL_STR_FMT(texname), id);
+                        } else {
+                            GLSLH("#define %.*s_tex(pos) (texture2DLod("$", pos, 0.0)) \n",
+                                  PL_STR_FMT(texname), id);
+                        }
                     }
                     goto next_bind;
                 }

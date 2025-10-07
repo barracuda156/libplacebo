@@ -92,8 +92,8 @@ static void init_shader(pl_shader sh, const struct pl_shader_params *params)
 
 pl_shader pl_shader_alloc(pl_log log, const struct pl_shader_params *params)
 {
-    static const int glsl_ver_req = 130;
-    if (params && params->glsl.version && params->glsl.version < 130) {
+    static const int glsl_ver_req = 110;
+    if (params && params->glsl.version && params->glsl.version < glsl_ver_req) {
         pl_err(log, "Requested GLSL version %d too low (required: %d)",
                params->glsl.version, glsl_ver_req);
         return NULL;
@@ -959,26 +959,69 @@ ident_t sh_prng(pl_shader sh, bool temporal, ident_t *p_state)
     ident_t randfun = sh_fresh(sh, "rand"),
             state = sh_fresh(sh, "state");
 
-    // Based on pcg3d (http://jcgt.org/published/0009/03/02/)
-    GLSLP("#define prng_t uvec3\n");
-    GLSLH("vec3 "$"(inout uvec3 s) {                    \n"
-          "    s = 1664525u * s + uvec3(1013904223u);   \n"
-          "    s.x += s.y * s.z;                        \n"
-          "    s.y += s.z * s.x;                        \n"
-          "    s.z += s.x * s.y;                        \n"
-          "    s ^= s >> 16u;                           \n"
-          "    s.x += s.y * s.z;                        \n"
-          "    s.y += s.z * s.x;                        \n"
-          "    s.z += s.x * s.y;                        \n"
-          "    return vec3(s) * 1.0/float(0xFFFFFFFFu); \n"
-          "}                                            \n",
-          randfun);
+    if (sh_glsl(sh).version >= 130) {
 
-    if (temporal) {
-        GLSL("uvec3 "$" = uvec3(gl_FragCoord.xy, "$"); \n",
-             state, SH_UINT_DYN(SH_PARAMS(sh).index));
+        // Based on pcg3d (http://jcgt.org/published/0009/03/02/)
+        GLSLP("#define prng_t uvec3\n");
+        GLSLH("vec3 %s(inout uvec3 s) {                     \n"
+              "    s = 1664525u * s + uvec3(1013904223u);   \n"
+              "    s.x += s.y * s.z;                        \n"
+              "    s.y += s.z * s.x;                        \n"
+              "    s.z += s.x * s.y;                        \n"
+              "    s ^= s >> 16u;                           \n"
+              "    s.x += s.y * s.z;                        \n"
+              "    s.y += s.z * s.x;                        \n"
+              "    s.z += s.x * s.y;                        \n"
+              "    return vec3(s) * 1.0/float(0xFFFFFFFFu); \n"
+              "}                                            \n",
+              randfun);
+
+        const char *seed = "0u";
+        if (temporal) {
+            seed = sh_var(sh, (struct pl_shader_var) {
+                .var  = pl_var_uint("seed"),
+                .data = &(unsigned int){ SH_PARAMS(sh).index },
+                .dynamic = true,
+            });
+        };
+
+        GLSL("uvec3 %s = uvec3(gl_FragCoord.xy, %s); \n", state, seed);
+
     } else {
-        GLSL("uvec3 "$" = uvec3(gl_FragCoord.xy, 0.0); \n", state);
+
+        // Based on SGGP (https://briansharpe.wordpress.com/2011/10/01/gpu-texture-free-noise/)
+        ident_t permute = sh_fresh(sh, "permute");
+        GLSLP("#define prng_t float\n");
+        GLSLH("float %s(float x) {                          \n"
+              "    x = (34.0 * x + 1.0) * x;                \n"
+              "    return fract(x * 1.0/289.0) * 289.0;     \n"
+              "}                                            \n"
+              "vec3 %s(inout float s) {                     \n"
+              "    vec3 ret;                                \n"
+              "    ret.x = %s(s);                           \n"
+              "    ret.y = %s(ret.x);                       \n"
+              "    ret.z = %s(ret.y);                       \n"
+              "    s = ret.z;                               \n"
+              "    return fract(ret * 1.0/41.0);            \n"
+              "}                                            \n",
+              permute, randfun, permute, permute, permute);
+
+        static const double phi = 1.618033988749895;
+        const char *seed = "0.0";
+        if (temporal) {
+            seed = sh_var(sh, (struct pl_shader_var) {
+                .var  = pl_var_float("seed"),
+                .data = &(float){ modff(phi * SH_PARAMS(sh).index, &(float){0}) },
+                .dynamic = true,
+            });
+        };
+
+        GLSL("vec3 %s_m = vec3(fract(gl_FragCoord.xy * vec2(%f)), %s);  \n"
+             "%s_m += vec3(1.0);                                        \n"
+             "float %s = %s(%s(%s(%s_m.x) + %s_m.y) + %s_m.z);          \n",
+             state, phi, seed,
+             state,
+             state, permute, permute, permute, state, state, state);
     }
 
     if (p_state)
@@ -987,4 +1030,24 @@ ident_t sh_prng(pl_shader sh, bool temporal, ident_t *p_state)
     ident_t res = sh_fresh(sh, "RAND");
     GLSLH("#define "$" ("$"("$"))\n", res, randfun, state);
     return res;
+}
+
+const char *sh_bvec(const pl_shader sh, int dims)
+{
+    static const char *bvecs[] = {
+        [1] = "bool",
+        [2] = "bvec2",
+        [3] = "bvec3",
+        [4] = "bvec4",
+    };
+
+    static const char *vecs[] = {
+        [1] = "float",
+        [2] = "vec2",
+        [3] = "vec3",
+        [4] = "vec4",
+    };
+
+    pl_assert(dims > 0 && dims < PL_ARRAY_SIZE(bvecs));
+    return sh_glsl(sh).version >= 130 ? bvecs[dims] : vecs[dims];
 }

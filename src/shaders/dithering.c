@@ -129,8 +129,15 @@ void pl_shader_dither(pl_shader sh, int new_depth,
     }
 
     enum pl_dither_method method = params->method;
+    bool can_fixed = sh_glsl(sh).version >= 130;
     ident_t lut = NULL_IDENT;
     int lut_size = 0;
+
+    if (method == PL_DITHER_ORDERED_FIXED && !can_fixed) {
+        PL_WARN(sh, "PL_DITHER_ORDERED_FIXED requires glsl version >= 130."
+                " falling back.");
+        goto fallback;
+    }
 
     if (dither_method_is_lut(method)) {
         if (!dither_state) {
@@ -165,7 +172,7 @@ void pl_shader_dither(pl_shader sh, int new_depth,
     goto done;
 
 fallback:
-    method = PL_DITHER_ORDERED_FIXED;
+    method = can_fixed ? PL_DITHER_ORDERED_FIXED : PL_DITHER_WHITE_NOISE;
     // fall through
 
 done: ;
@@ -261,7 +268,8 @@ done: ;
         }
 
         // Mix in the correct ratio corresponding to the offset and bias
-        GLSL("color = mix(low, high, greaterThan(offset, vec4(bias))); \n");
+        GLSL("color = mix(low, high, %s(greaterThan(offset, vec4(bias)))); \n",
+             sh_bvec(sh, 4));
     } else {
         // Approximate each gamma segment as a straight line, this simplifies
         // the process of dithering down to a single scale and (biased) round.

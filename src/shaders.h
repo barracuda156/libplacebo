@@ -357,6 +357,42 @@ struct sh_lut_params {
 // gets interpolated and clamped as needed. Returns NULL on error.
 ident_t sh_lut(pl_shader sh, const struct sh_lut_params *params);
 
+// Returns a GLSL-version appropriate "bvec"-like type. For GLSL 130+, this
+// returns bvecN. For GLSL 120, this returns vecN instead. The intended use of
+// this function is with mix(), which only accepts bvec in GLSL 130+.
+const char *sh_bvec(const pl_shader sh, int dims);
+
+// Returns the appropriate `textureLod`-equivalent function for the shader and
+// given texture.
+static inline const char *sh_tex_lod_fn(const pl_shader sh,
+                                        const struct pl_tex_params params)
+{
+    static const char *suffixed[] = {
+        [1] = "texture1DLod",
+        [2] = "texture2DLod", 
+        [3] = "texture3DLod",
+    };
+
+    int dims = pl_tex_params_dimension(params);
+    return sh_glsl(sh).version >= 130 ? "textureLod" : suffixed[dims];
+}
+
+// Not used at the moment, but retained for compat.
+// Returns the appropriate `texture`-equivalent function for the shader and
+// given texture.
+static inline const char *sh_tex_fn(const pl_shader sh,
+                                    const struct pl_tex_params params)
+{
+    static const char *suffixed[] = {
+        [1] = "texture1D",
+        [2] = "texture2D",
+        [3] = "texture3D",
+    };
+
+    int dims = pl_tex_params_dimension(params);
+    return sh_glsl(sh).version >= 130 ? "texture" : suffixed[dims];
+}
+
 static inline uint8_t sh_num_comps(uint8_t mask)
 {
     pl_assert((mask & 0xF) == mask);
